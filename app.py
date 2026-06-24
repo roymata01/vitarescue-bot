@@ -1,12 +1,29 @@
 from flask import Flask, request
 import os
 import requests
+import anthropic
 
 app = Flask(__name__)
 
 VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "vitarescue2024")
 WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
 PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID", "")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+CONTEXTO = """Eres el asistente virtual de VITA RESCUE CAPACITACIÓN, empresa mexicana de cursos de primeros auxilios.
+Tu trabajo es responder preguntas sobre los cursos, dar información, cotizar para empresas o escuelas, y mandar links de compra o registro.
+Responde siempre en español, de forma amable y profesional.
+Si no tienes información específica sobre algo, di que un asesor les contactará pronto."""
+
+def preguntar_claude(mensaje):
+    cliente = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    respuesta = cliente.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=500,
+        system=CONTEXTO,
+        messages=[{"role": "user", "content": mensaje}]
+    )
+    return respuesta.content[0].text
 
 def enviar_mensaje(numero, texto):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
@@ -31,7 +48,8 @@ def recibir_mensaje():
         numero = mensaje["from"]
         texto = mensaje["text"]["body"]
         print(f"Mensaje de {numero}: {texto}")
-        enviar_mensaje(numero, f"Hola! Recibí tu mensaje: {texto}")
+        respuesta = preguntar_claude(texto)
+        enviar_mensaje(numero, respuesta)
     except Exception as e:
         print("Error:", e)
     return "OK", 200
