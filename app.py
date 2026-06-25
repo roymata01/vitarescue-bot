@@ -9,6 +9,7 @@ VERIFY_TOKEN = os.environ.get("VERIFY_TOKEN", "vitarescue2024")
 WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
 PHONE_NUMBER_ID = os.environ.get("PHONE_NUMBER_ID", "")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+INSTAGRAM_TOKEN = os.environ.get("INSTAGRAM_TOKEN", "")
 
 CONTEXTO = """Eres el asistente virtual de VITA RESCUE CAPACITACION, empresa mexicana de cursos de primeros auxilios y productos de seguridad.
 
@@ -33,7 +34,7 @@ CURSOS:
 - Rescate acuatico - 4 horas
 - Programa para colegios (primaria, secundaria, bachillerato, docentes)
 
-MODALIDADES: Presencial (max 24 personas), En linea Zoom (max 20), E-learning VITAlearning, Colegios (max 35 alumnos).
+MODALIDADES: Presencial (max 24 personas), En linea Zoom (max 50), E-learning VITAlearning, Colegios (max 35 alumnos).
 
 ENTREGABLES: Constancia (1 ano vigencia), DC-3 para empresas, Constancia STOP THE BLEED internacional, Manuales, Reporte del curso.
 
@@ -61,6 +62,25 @@ DATOS A RECOLECTAR para cotizaciones de cursos: nombre, empresa, telefono, corre
 Cuando tengas los datos, cierra con: "Un asesor de VITA RESCUE te contactara para confirmar disponibilidad y cotizacion."
 """
 
+FILTRO = """Analiza este mensaje y decide si esta relacionado con VITA RESCUE (cursos de primeros auxilios, botiquines, RCP, hemorragias, capacitacion, productos de seguridad, precios, cotizaciones, informacion del negocio).
+
+Responde UNICAMENTE con una sola palabra:
+- SI: si el mensaje es sobre cursos, productos, precios, primeros auxilios, capacitacion, o interes en los servicios de VITA RESCUE
+- NO: si es un saludo sin contexto, mensaje personal, tema no relacionado, spam, o cualquier otra cosa
+
+Mensaje: """
+
+def es_relevante(mensaje):
+    cliente = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+    respuesta = cliente.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=5,
+        messages=[{"role": "user", "content": FILTRO + mensaje}]
+    )
+    resultado = respuesta.content[0].text.strip().upper()
+    print(f"Filtro para '{mensaje}': {resultado}")
+    return resultado == "SI"
+
 def preguntar_claude(mensaje):
     cliente = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     respuesta = cliente.messages.create(
@@ -71,10 +91,16 @@ def preguntar_claude(mensaje):
     )
     return respuesta.content[0].text
 
-def enviar_mensaje(numero, texto):
+def enviar_whatsapp(numero, texto):
     url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
     headers = {"Authorization": f"Bearer {WHATSAPP_TOKEN}", "Content-Type": "application/json"}
     data = {"messaging_product": "whatsapp", "to": numero, "type": "text", "text": {"body": texto}}
+    requests.post(url, headers=headers, json=data)
+
+def enviar_instagram(recipient_id, texto):
+    url = "https://graph.facebook.com/v18.0/me/messages"
+    headers = {"Authorization": f"Bearer {INSTAGRAM_TOKEN}", "Content-Type": "application/json"}
+    data = {"recipient": {"id": recipient_id}, "message": {"text": texto}}
     requests.post(url, headers=headers, json=data)
 
 @app.route("/webhook", methods=["GET"])
@@ -90,12 +116,27 @@ def verificar_webhook():
 def recibir_mensaje():
     data = request.get_json()
     try:
-        mensaje = data["entry"][0]["changes"][0]["value"]["messages"][0]
-        numero = mensaje["from"]
-        texto = mensaje["text"]["body"]
-        print(f"Mensaje de {numero}: {texto}")
-        respuesta = preguntar_claude(texto)
-        enviar_mensaje(numero, respuesta)
+        entry = data["entry"][0]
+        # Instagram
+        if "messaging" in entry:
+            mensaje = entry["messaging"][0]
+            sender_id = mensaje["sender"]["id"]
+            texto = mensaje["message"]["text"]
+            print(f"Instagram de {sender_id}: {texto}")
+            if es_relevante(texto):
+                respuesta = preguntar_claude(texto)
+                enviar_instagram(sender_id, respuesta)
+        # WhatsApp
+        elif "changes" in entry:
+            cambio = entry["changes"][0]["value"]
+            if "messages" in cambio:
+                mensaje = cambio["messages"][0]
+                numero = mensaje["from"]
+                texto = mensaje["text"]["body"]
+                print(f"WhatsApp de {numero}: {texto}")
+                if es_relevante(texto):
+                    respuesta = preguntar_claude(texto)
+                    enviar_whatsapp(numero, respuesta)
     except Exception as e:
         print("Error:", e)
     return "OK", 200
